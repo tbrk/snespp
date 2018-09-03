@@ -1,0 +1,182 @@
+.\" $Id: snespp.4 31 2007-04-16 08:33:29Z root $
+.\"
+.Dd March 25, 2007
+.Os FreeBSD 6.2
+.Dt SNESPP 4
+.Sh NAME
+.Nm snespp
+.Nd parallel port interface for Super Nintendo controllers
+.Sh SYNOPSIS
+.Cd "kldload snespp.ko"
+.\"
+.Sh DESCRIPTION
+The
+.Nm
+interface communciates with Super Nintendo (SNES) controllers through the
+parallel port. It presents itself as a keyboard to the rest of the operating
+system. Buttons pushed on a controller are sent as keys to the system
+console or X window session. The device file can also be opened and read as
+a
+.Xr joy 4
+joystick.
+.\"
+.Ss Hardware Interface
+The controller has 7 pins, of which 5 are used:
+.Bd -literal -offset center
++---------+-------
+| P C L D | X X G )
++---------+-------
+.Ed
+.Pp
+.Em P :
+power,
+.Em C :
+clock,
+.Em L :
+latch,
+.Em D :
+data,
+.Em G :
+ground.
+.Pp
+The controller contains chips that sample the state of all buttons when
+.Em latch
+is asserted. The button states are transmitted serially on the
+.Em data
+line in response to pulses on the
+.Em clock
+signal.
+.Pp
+The controller signals may be connected to a parallel port as follows:
+.Bl -column -offset indent ".Sy pin#" ".Sy function" ".Sy controller"
+.It Sy pin# Ta Sy function Ta Sy controller
+.It 2	d0	clock
+.It 3	d1	latch
+.It 4\(en9	da2\(en7	power
+.It 16\(en19	gnd	ground
+.It 10	nAck	data(1)
+.It 11	Busy	data(3)
+.It 12	PaperEnd	data(2)
+.It 13	Select	data(4)
+.It 15	nError	data(5)
+.El
+.Pp
+The power pins (da2\(en7) must be connected to the controller via diodes
+(such as 1N4148), with the cathode (the end with the band) toward the
+controller. The others may be connected directly. Multiple controllers
+share signals except for the
+.Em data
+lines which are numbered in the table above. The voltage swing of
+parallel port pins in many laptops is insufficient to trigger a
+controller. Additional circuitry is required.
+.\"
+.Ss Communication Protocol
+The controller state is sampled and communicated in response to the
+sequence:
+.Bl -enum -offset indent -compact
+.It
+drive
+.Em latch
+high for 12usec,
+.It
+wait 6usec then lower
+.Em clock,
+.It
+sample
+.Em data,
+.It
+wait 6usec then raise
+.Em clock,
+.It
+repeat another 11 times from step 2.
+.El
+.Pp
+The
+.Nm
+driver implements the sequence using
+.Xr microseq 9 .
+It is repeated every 16.6msec (60Hz) when the driver is active.
+.\"
+.Ss OS Interface
+By default the
+.Nm
+driver registers itself as a keyboard. Make and break events are generated
+as controller buttons are pushed and released respectively. The table below
+shows which keys are sent for the first two controllers.
+.Bl -column -offset indent ".Sy button" ".Sy data(1)" ".Sy data(2)"
+.It Sy button Ta Sy data(1) Ta Sy data(2)
+.It B	b	z
+.It Y	y	c
+.It Select	p	s
+.It Start	o	Enter
+.It Up	q	KP8
+.It Down	w	KP2
+.It Left	e	KP4
+.It Right	u	KP6
+.It A	a	KP+
+.It X	x	KP0
+.It L	l	1
+.It R	r	2
+.El
+.Pp
+The controller should be automatically attached by
+.Xr kbdmux 4 .
+.Pp
+It is also possible to access the data(1) controller using the interface
+described in
+.Xr joy 4 
+by opening and reading from
+.Pa /dev/snespp0 .
+In this case the
+.Em Y
+button is treated as button 1 and the
+.Em B
+button as button 2. The other buttons are ignored. The driver does not
+support the Linux joystick interface (devel/linux-js).
+.\"
+.Sh IMPLEMENTATION
+The serial protocol runs over
+.Xr ppbus 4
+using efficient
+.Xr microseq 9
+sequences. A kernel thread executes the communication protocol at regular
+intervals. It compares alternating snapshots of the button states to
+determine which push and release events have occurred. Events are queued
+into a circular buffer. Every six cycles a
+.Xr taskqueue 9
+task is queued to clear the buffer.
+.Pp
+The buffer clearing task executes the keyboard callback function which polls
+the keyboard interface for key events. Key events will be lost if the
+clearing task does not operate frequently enough.
+.\"
+.Sh BUGS
+Ideally the driver would stop polling the controller when not attached as a
+keyboard. However, this feature is not currently possible due to a bug in
+.Xr kbdmux 4 .
+.\"
+.Sh NOTES
+By default the
+.Nm
+driver polls for two controllers. Should more controllers be connected the
+.Li SNESPP_NUM_CONTROLLERS
+constant in
+.In snespp.h
+should be changed and the driver recompiled.
+.Pp
+The ppbus is held while the driver is active. Thus, the driver should be
+unloaded before attaching another device to the parallel port.
+.\"
+.Sh SEE ALSO
+.Xr kbdcontrol 1 ,
+.Xr joy 4 ,
+.Xr ppbus 4 ,
+.Xr microseq 9 ,
+.Xr kbdmux 4 .
+.Pp
+The Jim Christy post to Sci.Electronics.
+.\"
+.Sh AUTHORS
+.An Timothy Bourke Aq timbob@bigpond.com
+.Pp
+Using protocol and wiring information from several www sites.
